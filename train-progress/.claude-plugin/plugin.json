@@ -1,7 +1,7 @@
 {
   "name": "train-progress",
-  "version": "0.2.0",
-  "description": "A side panel with live progress bars for your ML training jobs",
+  "version": "0.3.0",
+  "description": "Live progress bars above the prompt for training runs and any other long task",
   "author": { "name": "hanlongli" },
   "license": "MIT",
   "types": "./types/index.d.ts",
@@ -9,7 +9,7 @@
     "scope": {
       "type": "string",
       "title": "Jobs to show",
-      "description": "all shows every training job on this machine; session shows only jobs started from the current Claude Code session. The panel's button and /train all|session switch it for the session.",
+      "description": "all shows every job on this machine; session shows only jobs started from the current Claude Code session. The panel's button and /train all|session switch it for the session.",
       "default": "all",
       "options": ["all", "session"]
     },

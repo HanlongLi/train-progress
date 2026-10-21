@@ -1,0 +1,15 @@
+{
+  "name": "train-progress",
+  "version": "0.3.0",
+  "description": "Progress of training runs and other long tasks: tells you when one finishes or fails",
+  "author": { "name": "hanlongli" },
+  "license": "MIT",
+  "skills": "./skills/",
+  "hooks": "./codex/hooks.json",
+  "interface": {
+    "displayName": "Train Progress",
+    "shortDescription": "Live progress of training runs and other long tasks",
+    "developerName": "hanlongli",
+    "category": "Productivity"
+  }
+}

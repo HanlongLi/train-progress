@@ -1,4 +1,5 @@
-"""Report training progress to the Claude Code `train-progress` panel.
+"""Report the progress of any long task (training, a data job, a batch of
+downloads) to the train-progress panel in Claude Code, Codex, OpenCode or `tp`.
 
 Each job writes ~/.train_progress/<name>.json (or $TRAIN_PROGRESS_DIR).
 
@@ -10,8 +11,14 @@ Each job writes ~/.train_progress/<name>.json (or $TRAIN_PROGRESS_DIR).
             p.update(step, loss=loss)
     # leaving the block marks the job done, or failed on an exception
 
-Also: `p.track(iterable)` wraps a loop like tqdm, and `HFCallback` /
-`LightningCallback` plug into Hugging Face Trainer / PyTorch Lightning.
+    with Progress("resize-images") as p:          # no total: shows elapsed time
+        for path in paths:
+            p.update(note=path.name)              # a short line of text under the bar
+
+`update` takes any named numbers (`loss=`, `reward=`, `files=`); the first one
+given is shown beside the bar. Also: `p.track(iterable)` wraps a loop like tqdm,
+and `HFCallback` / `LightningCallback` plug into Hugging Face Trainer / PyTorch
+Lightning.
 """
 
 import json
@@ -22,34 +29,69 @@ import time
 __all__ = ["Progress", "HFCallback", "LightningCallback"]
 
 
+# The agent session a job belongs to: set explicitly, or by the host agent in
+# every command it runs (Claude Code, Codex; the OpenCode plugin sets the first).
+SESSION_VARS = ("TRAIN_PROGRESS_SESSION", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID")
+
+
 def _dir():
     return os.environ.get("TRAIN_PROGRESS_DIR") or os.path.expanduser("~/.train_progress")
 
 
+def session_id():
+    for var in SESSION_VARS:
+        if os.environ.get(var):
+            return os.environ[var]
+    return None
+
+
 class Progress:
-    def __init__(self, name, total=0, min_interval=2.0, rank_zero_only=True):
+    def __init__(self, name, total=0, min_interval=2.0, rank_zero_only=True, resume=False):
         self.name = name
         self.total = int(total)
         self.step = 0
-        self.loss = None
+        self.metric_name = None
+        self.metric = None
+        self.note = None
         self.min_interval = min_interval
         self.started_at = time.time()
         # The session that started the job, for the panel's "this session" view.
-        self.session = os.environ.get("TRAIN_PROGRESS_SESSION") or os.environ.get("CLAUDE_CODE_SESSION_ID")
+        self.session = session_id()
         self._last_write = 0.0
         # Under DDP only rank 0 reports, so one job shows as one row.
         rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
         self.enabled = not (rank_zero_only and rank != 0)
         safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in name)
         self.path = os.path.join(_dir(), f"{safe}.json")
+        if resume:  # carry on a job another process started (`tp set`)
+            self._load()
         self._write("running", force=True)
 
-    def update(self, step=None, loss=None, total=None):
+    def _load(self):
+        try:
+            with open(self.path) as f:
+                old = json.load(f)
+        except (OSError, ValueError):
+            return
+        if old.get("status") != "running":
+            return  # a finished job of the same name: start over
+        self.step = int(old.get("step") or 0)
+        self.total = self.total or int(old.get("total") or 0)
+        self.metric_name, self.metric = old.get("metric_name"), old.get("metric")
+        self.note = old.get("note")
+        self.started_at = old.get("started_at") or self.started_at
+        self.session = self.session or old.get("session")
+
+    def update(self, step=None, total=None, note=None, **metrics):
         self.step = self.step + 1 if step is None else int(step)
-        if loss is not None:
-            self.loss = float(loss)
         if total is not None:
             self.total = int(total)
+        if note is not None:
+            self.note = str(note)[:200]
+        for name, value in metrics.items():
+            if value is not None:
+                self.metric_name, self.metric = name, float(value)
+                break
         self._write("running")
 
     def track(self, iterable, total=None):
@@ -61,7 +103,9 @@ class Progress:
             yield item
             self.update()
 
-    def finish(self, status="done"):
+    def finish(self, status="done", note=None):
+        if note is not None:
+            self.note = str(note)[:200]
         self._write(status, force=True)
 
     def __enter__(self):
@@ -82,7 +126,9 @@ class Progress:
             "name": self.name,
             "step": self.step,
             "total": self.total,
-            "loss": self.loss,
+            "metric": self.metric,
+            "metric_name": self.metric_name,
+            "note": self.note,
             "status": status,
             "started_at": self.started_at,
             "updated_at": now,
