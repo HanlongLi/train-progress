@@ -4,6 +4,7 @@
     tp --session ID            # only jobs started from this agent session
     tp --once                  # print once and exit (for scripts / status lines)
     tp --watch DIR ...         # also watch these TensorBoard log folders
+    tp codex [ARGS...]         # Codex CLI with live bars below the prompt (tmux)
 
     tp run [-n NAME] -- CMD    # run CMD as a job: progress read from its output,
                                # done or failed by its exit code
@@ -266,6 +267,9 @@ def report(command, argv):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] and argv[0] in ("codex", "footer"):
+        import codex_footer
+        sys.exit(codex_footer.launch(argv[1:]) if argv[0] == "codex" else codex_footer.main(argv[1:]))
     if argv[:1] == ["run"]:
         sys.exit(run(argv[1:]))
     if argv[:1] and argv[0] in COMMANDS:
