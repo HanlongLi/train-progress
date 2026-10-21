@@ -2,7 +2,8 @@
 
 Live progress bars for training runs and any other long task (builds, data
 jobs, downloads, test suites). In Claude Code they sit in a bar under the
-prompt; Codex and OpenCode tell you when a job finishes, fails or stalls; and
+prompt; Codex CLI gets a live footer with `tp codex`; Codex and OpenCode also
+tell you when a job finishes, fails or stalls; and
 the `tp` command shows them in any terminal.
 
 ```
@@ -35,6 +36,39 @@ Then review and trust its hooks with `/hooks` in Codex. A new session lists the
 jobs that are running, and after each turn Codex shows which jobs finished,
 failed or stalled. The plugin's `progress` skill teaches Codex to start long
 commands with `tp run` and to check on them with `tp --once`.
+
+For **live bars below the Codex CLI prompt**, install the terminal helper and
+tmux, then launch Codex through `tp`:
+
+```sh
+./train-progress/install.sh   # from this repository's root
+brew install tmux            # macOS; on Linux use your package manager
+tp codex
+tp codex resume --last       # Codex arguments work here too
+```
+
+The bottom three terminal rows show job bars, percentages, step counts, metrics
+and ETA. They refresh every second, including while Codex is busy or waiting
+for input. Running and stalled jobs appear first; finished jobs stay for ten
+minutes. Use `tp --once` to see the full list.
+
+This uses a separate tmux server to reserve the footer; it does not patch Codex
+or edit your Codex or tmux configuration. Ordinary `codex` sessions keep their
+existing interface. Exit Codex normally to close the footer, or press tmux's
+`Ctrl+B`, then `D` to detach and keep it running; the launcher prints the command
+to reattach. The launcher also works inside an existing tmux pane.
+
+To show only jobs started by this launch:
+
+```sh
+TRAIN_PROGRESS_SCOPE=session tp codex
+```
+
+The launcher gives its commands a shared `TRAIN_PROGRESS_SESSION` label, so
+`tp run`, Python helpers and Codex hook notices agree on which jobs belong to
+the launch. TensorBoard jobs without a session label appear in the default
+all-jobs view. This footer is for the CLI; the Codex desktop app still uses
+hook notices.
 
 **OpenCode, or any terminal** (the `tp` command):
 
@@ -117,3 +151,12 @@ run, and the OpenCode plugin sets `TRAIN_PROGRESS_SESSION`.
 | Jobs to show | `all` | `all` or `session` |
 | Extra TensorBoard log folders | (empty) | comma-separated |
 | Watch TensorBoard logs | on | turn off to show only jobs reported by `tp` or `train_progress.py` |
+
+## Testing the Codex footer
+
+```sh
+python3 -m unittest discover -s train-progress/python -v
+```
+
+The tests include a real tmux/PTY check for live updates, argument forwarding,
+terminal resizing and shutdown. That check needs tmux and local socket access.

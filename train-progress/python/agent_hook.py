@@ -21,6 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 def _jobs(session):
     scoped = os.environ.get("TRAIN_PROGRESS_SCOPE") == "session"
+    session = os.environ.get("TRAIN_PROGRESS_SESSION") or session
     return tp_view.load(session if scoped and session else None)
 
 

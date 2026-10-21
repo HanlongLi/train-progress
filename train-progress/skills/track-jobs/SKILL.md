@@ -40,3 +40,19 @@ From Python, `from train_progress import Progress` (next to `tp_view.py`):
 `tp --once` prints every job with its bar, step, ETA and status;
 `tp --once --session <id>` limits it to one agent session. Read it before
 answering "how is the training going?" rather than guessing from logs.
+
+## Live bars below the Codex CLI prompt
+
+Launch a new interactive Codex CLI session with `tp codex [CODEX_ARGS...]`.
+This reserves three footer rows with tmux and refreshes them every second,
+independently of model turns. It requires the installed `tp` helper and tmux
+(`brew install tmux` on macOS). It does not change an already-running Codex UI.
+
+`TRAIN_PROGRESS_SCOPE=session tp codex` shows only jobs started by that launch;
+the launcher supplies `TRAIN_PROGRESS_SESSION` to commands and hook notices.
+Normal exit closes the footer. Detaching with Ctrl+B, then D keeps Codex alive
+and prints a reattach command. The desktop app continues to use hook notices.
+
+Do not launch an interactive `tp codex` inside an agent tool call just to show
+progress. Read `tp --once` for a snapshot, and give the person the launcher
+command when they want a persistent CLI footer.
