@@ -1,0 +1,14 @@
+{
+  "description": "train-progress: list running jobs when a session starts, and say when one finishes, fails or stalls",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "python3 \"${PLUGIN_ROOT}/python/agent_hook.py\" session-start", "timeout": 10 }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "python3 \"${PLUGIN_ROOT}/python/agent_hook.py\" turn", "timeout": 10 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "python3 \"${PLUGIN_ROOT}/python/agent_hook.py\" turn", "timeout": 10 }] }
+    ]
+  }
+}

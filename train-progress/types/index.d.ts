@@ -8,7 +8,9 @@ export type Job = {
   total: number
   metric?: number
   metricName?: string
+  note?: string
   etaSec?: number
+  startedMs?: number
   updatedMs: number
   host?: string
   session?: string
@@ -18,6 +20,13 @@ export type Scope = 'all' | 'session'
 
 declare module 'claude-code' {
   interface PluginState {
-    'train-progress': { jobs: Job[]; hideDone: boolean; dir: string; scope: Scope; sessionId: string }
+    'train-progress': {
+      jobs: Job[]
+      hideDone: boolean
+      isBandHidden: boolean
+      dir: string
+      scope: Scope
+      sessionId: string
+    }
   }
 }

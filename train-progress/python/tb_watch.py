@@ -5,8 +5,8 @@
 Every few seconds it finds run folders under the roots (any folder holding
 events.out.tfevents.*), reads the new records of each event file, and writes
 ~/.train_progress/<experiment>__<run>.json. The roots are the ones given plus
-the lines of ~/.train_progress/roots.txt, which the Claude Code mod fills with
-each session's `<project>/logs`. No TensorBoard install is needed: the event
+the lines of ~/.train_progress/roots.txt, which the Claude Code, Codex and OpenCode
+integrations fill with each session's `<project>/logs`. No TensorBoard install is needed: the event
 file format is parsed here directly. Only one watcher runs per machine; a second
 one exits at once.
 
@@ -17,7 +17,8 @@ one exits at once.
 - failed: the event file names the trainer's PID; when that process is gone from
   this host before the run is done, the run is marked failed.
 - session: read from the trainer's environment (TRAIN_PROGRESS_SESSION, else
-  CLAUDE_CODE_SESSION_ID), so the panel can show one session's runs.
+  CLAUDE_CODE_SESSION_ID, else CODEX_THREAD_ID), so the panel can show one
+  session's runs.
 """
 
 import argparse
@@ -30,7 +31,7 @@ import struct
 import time
 
 HOST = socket.gethostname()
-SESSION_VARS = (b"TRAIN_PROGRESS_SESSION=", b"CLAUDE_CODE_SESSION_ID=")
+SESSION_VARS = (b"TRAIN_PROGRESS_SESSION=", b"CLAUDE_CODE_SESSION_ID=", b"CODEX_THREAD_ID=")
 
 
 def out_dir():

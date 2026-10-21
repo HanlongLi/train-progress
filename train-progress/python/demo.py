@@ -1,4 +1,4 @@
-"""Fake a training run so the panel has something to show: python demo.py [name] [seconds]"""
+"""Fake a training run so the progress bar has something to show: python demo.py [name] [seconds]"""
 import math, random, sys, time
 from train_progress import Progress
 

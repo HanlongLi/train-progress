@@ -4,7 +4,7 @@ import type { Register } from 'claude-code'
 import type { Job, JobStatus, Scope } from '../types'
 
 const PANE = 'train-progress'
-const TITLE = 'Training'
+const TITLE = 'Progress'
 const POLL_MS = 5000
 // How often to try starting the TensorBoard watcher; it exits at once when
 // another session (or tp_view.py) already runs one on this machine.
@@ -13,9 +13,14 @@ const WATCHER_RETRY_MS = 30_000
 const STALL_MS = 15 * 60 * 1000
 // A finished, failed or stalled job drops off the panel once it is this old.
 const KEEP_MS = 24 * 60 * 60 * 1000
+// ...and off the bar above the prompt once it is this old.
+const BAND_KEEP_MS = 10 * 60 * 1000
+// Rows of jobs the bar above the prompt shows before "n more".
+const BAND_ROWS = 3
 
 const jobs = atom({ plugin: 'train-progress', key: 'jobs' } as const, [] as Job[])
 const hideDone = atom({ plugin: 'train-progress', key: 'hideDone' } as const, false)
+const isBandHidden = atom({ plugin: 'train-progress', key: 'isBandHidden' } as const, false)
 const dir = atom({ plugin: 'train-progress', key: 'dir' } as const, '')
 const scope = atom({ plugin: 'train-progress', key: 'scope' } as const, 'all' as Scope)
 const sessionId = atom({ plugin: 'train-progress', key: 'sessionId' } as const, '')
@@ -74,10 +79,12 @@ function parseJob(id: string, text: string, mtimeMs: number, now: number): Job |
     status,
     step,
     total,
-    // `metric` + `metric_name` (tb_watch.py), or the helper's `loss`
+    // `metric` + `metric_name`, or the `loss` of helpers before 0.3
     metric: typeof raw.metric === 'number' ? raw.metric : typeof raw.loss === 'number' ? raw.loss : undefined,
     metricName: typeof raw.metric_name === 'string' ? raw.metric_name : 'loss',
+    note: typeof raw.note === 'string' && raw.note !== '' ? raw.note : undefined,
     etaSec,
+    startedMs: started > 0 ? started * 1000 : undefined,
     updatedMs: lastMs,
     host: typeof raw.host === 'string' ? raw.host : undefined,
     session: typeof raw.session === 'string' ? raw.session : undefined,
@@ -86,6 +93,29 @@ function parseJob(id: string, text: string, mtimeMs: number, now: number): Job |
 
 function inScope(list: Job[], view: Scope, id: string): Job[] {
   return view === 'session' ? list.filter(j => j.session === id) : list
+}
+
+function fractionOf(job: Job): number | undefined {
+  if (job.status === 'done') return 1
+  return job.total > 0 ? job.step / job.total : undefined
+}
+
+// ETA while running, elapsed time when there is no total, else how long ago it ended.
+function timing(job: Job, now: number): string {
+  if (job.status !== 'running') return `${job.status} ${duration((now - job.updatedMs) / 1000)} ago`
+  if (job.etaSec !== undefined) return `ETA ${duration(job.etaSec)}`
+  if (job.total === 0 && job.startedMs !== undefined) return duration((now - job.startedMs) / 1000)
+  return ''
+}
+
+function details(job: Job): string {
+  return [
+    job.total > 0 ? `${job.step}/${job.total}` : job.step > 0 && `step ${job.step}`,
+    job.metric !== undefined && `${job.metricName} ${job.metric.toPrecision(4)}`,
+    job.note,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 export const register: Register = (on, options) => {
@@ -103,11 +133,13 @@ export const register: Register = (on, options) => {
     await update($, sessionId, () => id)
     await update($, scope, () => (options.scope === 'session' ? 'session' : 'all'))
 
-    await $.command.register({
-      name: 'train',
-      description: 'Show the training progress panel (all: every job, session: this session\'s)',
-      argumentHint: '[all|session]',
-    })
+    for (const name of ['progress', 'train']) {
+      await $.command.register({
+        name,
+        description: 'Progress of training runs and other long jobs (all|session, panel, hide|show)',
+        argumentHint: '[all|session|panel|hide|show]',
+      })
+    }
 
     if (options.watcher !== false) {
       // Tell the watcher where this project's TensorBoard logs are.
@@ -163,30 +195,78 @@ export const register: Register = (on, options) => {
         seen.set(job.id, job.status)
       }
 
+      // The bar above the prompt says all this; the status line stands in when it is hidden.
       const running = shown.filter(j => j.status === 'running').length
       const failed = shown.filter(j => j.status === 'failed' || j.status === 'stalled').length
-      const parts = [running > 0 && `${running} training`, failed > 0 && `${failed} need attention`]
+      const parts = [running > 0 && `${running} running`, failed > 0 && `${failed} need attention`]
       const summary = parts.filter(Boolean).join(' · ')
-      void $.ui.status(summary === '' ? undefined : summary)
+      void $.ui.status(summary === '' || !(await read($, isBandHidden)) ? undefined : summary)
 
       await update($, jobs, () => found)
-      return shown
     }
 
-    const first = await poll()
+    await poll()
     $.clock.every(POLL_MS, () => void poll())
-    if (first.some(j => j.status === 'running')) void $.ui.open({ id: PANE, title: TITLE })
 
     return next(e)
   })
 
-  on('command.run', { command: 'train' }, async ($, e) => {
+  on('command.run', { command: ['progress', 'train'] }, async ($, e) => {
     const arg = e.args.trim()
     if (arg === 'all' || arg === 'session') await update($, scope, () => arg)
-    await $.ui.open({ id: PANE, title: TITLE })
+    if (arg === 'panel') {
+      await $.ui.open({ id: PANE, title: TITLE })
+      return { text: 'Progress panel opened.' }
+    }
+    await update($, isBandHidden, () => arg === 'hide')
+    if (arg === 'hide') return { text: 'Progress bar hidden; the status line keeps a count. /progress shows it again.' }
     const view = await read($, scope)
 
-    return { text: `Training panel opened (${view === 'all' ? 'all sessions' : 'this session'}).` }
+    return { text: `Showing ${view === 'all' ? 'every job on this machine' : 'this session\'s jobs'} above the prompt.` }
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey || (await read($, isBandHidden))) return next(e)
+    const now = Date.now()
+    // Running jobs first, then the ones that ended in the last few minutes.
+    const recent = inScope(await read($, jobs), await read($, scope), await read($, sessionId)).filter(
+      j => j.status === 'running' || now - j.updatedMs < BAND_KEEP_MS,
+    )
+    const list = [...recent.filter(j => j.status === 'running'), ...recent.filter(j => j.status !== 'running')]
+    if (list.length === 0) return next(e)
+
+    const { Box, Text } = $.ui.resolve(e)
+    const width = e.props.bodyColumns
+    // name · bar · percent · details, the details cut first as the row narrows
+    const nameCols = Math.min(28, Math.max(10, Math.floor(width * 0.3)))
+    const barCols = width >= 60 ? 16 : 8
+    const rows = list.slice(0, BAND_ROWS)
+
+    return (
+      <Box flexDirection="column">
+        {rows.map(job => {
+          const fraction = fractionOf(job)
+          const right = [details(job), timing(job, now)].filter(Boolean).join(' · ')
+          return (
+            <Box key={job.id} flexDirection="row" gap={1}>
+              <Box width={nameCols}>
+                <Text color={COLOR[job.status]} wrap="truncate-end">
+                  {ICON[job.status]} {job.name}
+                </Text>
+              </Box>
+              <Text color={COLOR[job.status]}>{fraction === undefined ? '░'.repeat(barCols) : bar(fraction, barCols)}</Text>
+              <Text tabular>{fraction === undefined ? '   …' : `${Math.floor(fraction * 100)}%`.padStart(4)}</Text>
+              <Text dimColor wrap="truncate-end">
+                {right}
+              </Text>
+            </Box>
+          )
+        })}
+        {list.length > rows.length && (
+          <Text dimColor>+{list.length - rows.length} more · /progress panel</Text>
+        )}
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -197,6 +277,7 @@ export const register: Register = (on, options) => {
     const folder = await read($, dir)
     const width = e.props.bodyColumns ?? 40
     const shown = isHiding ? list.filter(j => j.status !== 'done') : list
+    const now = Date.now()
 
     const controls = (
       <Box flexDirection="row" gap={2} marginBottom={1}>
@@ -218,12 +299,12 @@ export const register: Register = (on, options) => {
         <Box flexDirection="column">
           {controls}
           <Text dimColor>
-            {view === 'session' ? 'No jobs started from this session.' : 'No training jobs found in'}
+            {view === 'session' ? 'No jobs started from this session.' : 'No jobs found in'}
           </Text>
           {view === 'all' && <Text dimColor>{folder}</Text>}
           <Text dimColor> </Text>
           <Text dimColor>TensorBoard runs under ./logs show up by themselves;</Text>
-          <Text dimColor>other code reports with train_progress.py.</Text>
+          <Text dimColor>`tp run -- CMD` tracks any command.</Text>
         </Box>
       )
     }
@@ -232,21 +313,9 @@ export const register: Register = (on, options) => {
       <Box flexDirection="column">
         {controls}
         {shown.map(job => {
-          const fraction = job.status === 'done' ? 1 : job.total > 0 ? job.step / job.total : 0
-          const pct = `${Math.floor(fraction * 100)}%`.padStart(4)
-          const right =
-            job.status === 'running' && job.etaSec !== undefined
-              ? `ETA ${duration(job.etaSec)}`
-              : job.status === 'running'
-                ? ''
-                : `${job.status} ${duration((Date.now() - job.updatedMs) / 1000)} ago`
-          const details = [
-            job.total > 0 ? `${job.step}/${job.total}` : `step ${job.step}`,
-            job.metric !== undefined && `${job.metricName} ${job.metric.toPrecision(4)}`,
-            job.host,
-          ]
-            .filter(Boolean)
-            .join(' · ')
+          const fraction = fractionOf(job)
+          const pct = fraction === undefined ? '   …' : `${Math.floor(fraction * 100)}%`.padStart(4)
+          const line = [details(job), job.host].filter(Boolean).join(' · ')
 
           return (
             <Box key={job.id} flexDirection="column" marginBottom={1}>
@@ -254,14 +323,14 @@ export const register: Register = (on, options) => {
                 <Text color={COLOR[job.status]} wrap="truncate-end">
                   {ICON[job.status]} <Text weight="bold">{job.name}</Text>
                 </Text>
-                <Text dimColor>{right}</Text>
+                <Text dimColor>{timing(job, now)}</Text>
               </Box>
               <Text>
-                <Text color={COLOR[job.status]}>{bar(fraction, width - 6)}</Text>
+                <Text color={COLOR[job.status]}>{bar(fraction ?? 0, width - 6)}</Text>
                 <Text tabular>{pct}</Text>
               </Text>
               <Text dimColor wrap="truncate-end">
-                {details}
+                {line}
               </Text>
             </Box>
           )
