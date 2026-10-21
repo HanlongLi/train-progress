@@ -23,7 +23,7 @@ declare module 'claude-code' {
     'train-progress': {
       jobs: Job[]
       hideDone: boolean
-      isBandHidden: boolean
+      isBarHidden: boolean
       dir: string
       scope: Scope
       sessionId: string

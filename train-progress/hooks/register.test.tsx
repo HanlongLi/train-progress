@@ -14,17 +14,11 @@ const PANE = {
   },
 } as const
 
-const BAND = {
+const HINT = {
   plugin: 'train-progress',
-  component: 'AbovePrompt',
-  props: {
-    hasSurvey: false,
-    isWorking: false,
-    maxRows: 10,
-    bodyColumns: 100,
-    scroll: { offset: 0, bodyRows: 10 },
-    view: {},
-  },
+  component: 'PromptHint',
+  viewport: { columns: 110, rows: 40 },
+  props: { isDraft: false, isWorking: false, hint: '? for shortcuts' },
 } as const
 
 const now = Date.now()
@@ -98,7 +92,32 @@ test('the session view shows only this session\'s jobs', { options: { watcher: f
   }
 })
 
-test('the bar above the prompt shows a row per job, and hides', { options: { watcher: false } }, async ($, on) => {
+test('/progress panel opens the panel and /progress close closes it', { options: { watcher: false } }, async ($, on) => {
+  const calls: string[] = []
+  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/me' : undefined }))
+  on('fs.list', () => ({ value: [] }))
+  on('command.register', () => ({ value: { command: 'progress' } }))
+  on('ui.open', (_, e) => (calls.push(`open ${e.id}`), { value: { isPlaced: true } }))
+  on('ui.close', (_, e) => (calls.push(`close ${e.id}`), { value: undefined }))
+  on('ui.status', () => ({ value: undefined }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.id', () => ({ value: 'this-session' }))
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const run = (args: string) =>
+    $.command.run({
+      command: 'progress',
+      args,
+      origin: { kind: 'composer' },
+      presentation: { isFullscreen: false, columns: 110 },
+    })
+
+  expect((await run('panel')).text).toMatch(/opened/)
+  expect((await run('close')).text).toMatch(/closed/)
+  expect(calls).toEqual(['open train-progress', 'close train-progress'])
+})
+
+test('the bar under the prompt keeps the hint line, shows a row per job, and hides', { options: { watcher: false } }, async ($, on) => {
   const FILES = files('other-session')
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/me' : undefined }))
   on('fs.list', () => ({
@@ -107,10 +126,10 @@ test('the bar above the prompt shows a row per job, and hides', { options: { wat
   on('fs.read', (_, e) => ({ value: FILES[e.path.split('/').pop() ?? ''] ?? '' }))
   on('command.register', () => ({ value: { command: 'progress' } }))
   on('ui.status', () => ({ value: undefined }))
-  // stands for the engine's own band, drawn once the mod passes
+  // stands for the engine's own hint line
   on('ui.render', ($, e) => {
-    const { Box } = $.ui.resolve(e)
-    return <Box />
+    const { Text } = $.ui.resolve(e)
+    return <Text dimColor>? for shortcuts</Text>
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'this-session' }))
@@ -118,7 +137,8 @@ test('the bar above the prompt shows a row per job, and hides', { options: { wat
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ ...BAND, surface })
+    const ui = await $.ui.mount({ ...HINT, surface })
+    expect(await ui.find({ type: 'Text', text: /\? for shortcuts/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /bert-ft/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /60%/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /600\/1000 · loss 0\.4213 · ETA 6m40s/ })).toBeDefined()
@@ -128,8 +148,14 @@ test('the bar above the prompt shows a row per job, and hides', { options: { wat
     await ui.unmount()
   }
 
-  await $.command.run({ command: 'progress', args: 'hide' })
-  const hidden = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await $.command.run({
+    command: 'progress',
+    args: 'hide',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: false, columns: 110 },
+  })
+  const hidden = await $.ui.mount({ ...HINT, surface: 'terminal' })
   expect(await hidden.find({ type: 'Text', text: /bert-ft/ })).toBeUndefined()
+  expect(await hidden.find({ type: 'Text', text: /\? for shortcuts/ })).toBeDefined()
   await hidden.unmount()
 })
