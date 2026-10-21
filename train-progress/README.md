@@ -1,7 +1,7 @@
 # train-progress
 
 Live progress bars for training runs and any other long task (builds, data
-jobs, downloads, test suites). In Claude Code they sit in a bar above the
+jobs, downloads, test suites). In Claude Code they sit in a bar under the
 prompt; Codex and OpenCode tell you when a job finishes, fails or stalls; and
 the `tp` command shows them in any terminal.
 
@@ -19,9 +19,10 @@ the `tp` command shows them in any terminal.
 /plugin install train-progress --marketplace hanlongli/train-progress
 ```
 
-The bar shows above the prompt while a job is running or just ended.
+The bar shows under the prompt while a job is running or just ended.
 `/progress hide` / `/progress` hides and shows it, `/progress panel` opens the
-full list in a side panel, `/progress all|session` picks whose jobs to show.
+full list in a side panel and `/progress close` closes it, and
+`/progress all|session` picks whose jobs to show.
 
 **Codex**:
 

@@ -13,14 +13,16 @@ const WATCHER_RETRY_MS = 30_000
 const STALL_MS = 15 * 60 * 1000
 // A finished, failed or stalled job drops off the panel once it is this old.
 const KEEP_MS = 24 * 60 * 60 * 1000
-// ...and off the bar above the prompt once it is this old.
-const BAND_KEEP_MS = 10 * 60 * 1000
-// Rows of jobs the bar above the prompt shows before "n more".
-const BAND_ROWS = 3
+// ...and off the bar under the prompt once it is this old.
+const BAR_KEEP_MS = 10 * 60 * 1000
+// Rows of jobs the bar under the prompt shows before "n more".
+const BAR_ROWS = 3
+// No ETA until a job has run this long: `tp set` alone would give "ETA 0s".
+const ETA_MIN_S = 5
 
 const jobs = atom({ plugin: 'train-progress', key: 'jobs' } as const, [] as Job[])
 const hideDone = atom({ plugin: 'train-progress', key: 'hideDone' } as const, false)
-const isBandHidden = atom({ plugin: 'train-progress', key: 'isBandHidden' } as const, false)
+const isBarHidden = atom({ plugin: 'train-progress', key: 'isBarHidden' } as const, false)
 const dir = atom({ plugin: 'train-progress', key: 'dir' } as const, '')
 const scope = atom({ plugin: 'train-progress', key: 'scope' } as const, 'all' as Scope)
 const sessionId = atom({ plugin: 'train-progress', key: 'sessionId' } as const, '')
@@ -69,7 +71,7 @@ function parseJob(id: string, text: string, mtimeMs: number, now: number): Job |
   if (status !== 'running' && now - lastMs > KEEP_MS) return undefined
 
   let etaSec: number | undefined
-  if (status === 'running' && step > 0 && total > step && started > 0 && updated > started) {
+  if (status === 'running' && step > 0 && total > step && started > 0 && updated - started >= ETA_MIN_S) {
     etaSec = ((total - step) * (updated - started)) / step
   }
 
@@ -109,10 +111,12 @@ function timing(job: Job, now: number): string {
 }
 
 function details(job: Job): string {
+  const count = job.total > 0 ? `${job.step}/${job.total}` : job.step > 0 ? `step ${job.step}` : ''
   return [
-    job.total > 0 ? `${job.step}/${job.total}` : job.step > 0 && `step ${job.step}`,
+    count,
     job.metric !== undefined && `${job.metricName} ${job.metric.toPrecision(4)}`,
-    job.note,
+    // `tp run` notes are often just the step line ("16/30")
+    job.note !== count && job.note,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -134,11 +138,14 @@ export const register: Register = (on, options) => {
     await update($, scope, () => (options.scope === 'session' ? 'session' : 'all'))
 
     for (const name of ['progress', 'train']) {
-      await $.command.register({
-        name,
-        description: 'Progress of training runs and other long jobs (all|session, panel, hide|show)',
-        argumentHint: '[all|session|panel|hide|show]',
-      })
+      // A name another command holds is refused; the bar still works without it.
+      await $.command
+        .register({
+          name,
+          description: 'Progress of training runs and other long jobs (all|session, panel|close, hide|show)',
+          argumentHint: '[all|session|panel|close|hide|show]',
+        })
+        .catch(() => undefined)
     }
 
     if (options.watcher !== false) {
@@ -195,12 +202,12 @@ export const register: Register = (on, options) => {
         seen.set(job.id, job.status)
       }
 
-      // The bar above the prompt says all this; the status line stands in when it is hidden.
+      // The bar under the prompt says all this; the status line stands in when it is hidden.
       const running = shown.filter(j => j.status === 'running').length
       const failed = shown.filter(j => j.status === 'failed' || j.status === 'stalled').length
       const parts = [running > 0 && `${running} running`, failed > 0 && `${failed} need attention`]
       const summary = parts.filter(Boolean).join(' · ')
-      void $.ui.status(summary === '' || !(await read($, isBandHidden)) ? undefined : summary)
+      void $.ui.status(summary === '' || !(await read($, isBarHidden)) ? undefined : summary)
 
       await update($, jobs, () => found)
     }
@@ -216,39 +223,46 @@ export const register: Register = (on, options) => {
     if (arg === 'all' || arg === 'session') await update($, scope, () => arg)
     if (arg === 'panel') {
       await $.ui.open({ id: PANE, title: TITLE })
-      return { text: 'Progress panel opened.' }
+      return { text: 'Progress panel opened. /progress close closes it.' }
     }
-    await update($, isBandHidden, () => arg === 'hide')
+    if (arg === 'close') {
+      await $.ui.close({ id: PANE })
+      return { text: 'Progress panel closed.' }
+    }
+    await update($, isBarHidden, () => arg === 'hide')
     if (arg === 'hide') return { text: 'Progress bar hidden; the status line keeps a count. /progress shows it again.' }
     const view = await read($, scope)
 
-    return { text: `Showing ${view === 'all' ? 'every job on this machine' : 'this session\'s jobs'} above the prompt.` }
+    return { text: `Showing ${view === 'all' ? 'every job on this machine' : 'this session\'s jobs'} under the prompt.` }
   })
 
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || (await read($, isBandHidden))) return next(e)
+  // The rows go under the prompt, beneath the engine's own hint line, which stays live.
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    const hint = await next(e)
+    if (await read($, isBarHidden)) return hint
     const now = Date.now()
     // Running jobs first, then the ones that ended in the last few minutes.
     const recent = inScope(await read($, jobs), await read($, scope), await read($, sessionId)).filter(
-      j => j.status === 'running' || now - j.updatedMs < BAND_KEEP_MS,
+      j => j.status === 'running' || now - j.updatedMs < BAR_KEEP_MS,
     )
     const list = [...recent.filter(j => j.status === 'running'), ...recent.filter(j => j.status !== 'running')]
-    if (list.length === 0) return next(e)
+    if (list.length === 0) return hint
 
     const { Box, Text } = $.ui.resolve(e)
-    const width = e.props.bodyColumns
+    const width = (e.viewport?.columns ?? 80) - 4
     // name · bar · percent · details, the details cut first as the row narrows
     const nameCols = Math.min(28, Math.max(10, Math.floor(width * 0.3)))
     const barCols = width >= 60 ? 16 : 8
-    const rows = list.slice(0, BAND_ROWS)
+    const rows = list.slice(0, BAR_ROWS)
 
     return (
       <Box flexDirection="column">
+        {hint}
         {rows.map(job => {
           const fraction = fractionOf(job)
           const right = [details(job), timing(job, now)].filter(Boolean).join(' · ')
           return (
-            <Box key={job.id} flexDirection="row" gap={1}>
+            <Box key={job.id} flexDirection="row" gap={1} paddingLeft={2}>
               <Box width={nameCols}>
                 <Text color={COLOR[job.status]} wrap="truncate-end">
                   {ICON[job.status]} {job.name}
@@ -263,7 +277,9 @@ export const register: Register = (on, options) => {
           )
         })}
         {list.length > rows.length && (
-          <Text dimColor>+{list.length - rows.length} more · /progress panel</Text>
+          <Box paddingLeft={2}>
+            <Text dimColor>+{list.length - rows.length} more · /progress panel</Text>
+          </Box>
         )}
       </Box>
     )

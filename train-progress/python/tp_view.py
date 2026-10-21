@@ -32,6 +32,7 @@ from train_progress import Progress  # noqa: E402
 
 STALL_S = 15 * 60
 KEEP_S = 24 * 3600
+ETA_MIN_S = 5  # no ETA before this: `tp set` alone would give "ETA 0s"
 ICON = {"running": "●", "done": "✓", "failed": "✗", "stalled": "◌"}
 COLOR = {"running": "36", "done": "32", "failed": "31", "stalled": "33"}
 COMMANDS = ("run", "set", "done", "fail")
@@ -105,7 +106,7 @@ def render(jobs, width, color):
         frac = 1.0 if st == "done" else (min(1.0, step / total) if total else 0.0)
         right = ""
         started, updated = j.get("started_at"), j.get("updated_at")
-        if st == "running" and started and updated and step and total > step and updated > started:
+        if st == "running" and started and updated and step and total > step and updated - started >= ETA_MIN_S:
             right = "ETA " + duration((total - step) * (updated - started) / step)
         elif st == "running" and not total and started:
             right = "running " + duration(time.time() - started)
@@ -121,10 +122,11 @@ def render(jobs, width, color):
         else:  # no total: nothing to measure the bar against
             lines.append(c("2", "░" * cells) + "    …")
         metric = j.get("metric", j.get("loss"))
-        details = [f"{step}/{total}" if total else f"step {step}" if step else ""]
+        count = f"{step}/{total}" if total else f"step {step}" if step else ""
+        details = [count]
         if metric is not None:
             details.append(f"{j.get('metric_name') or 'loss'} {metric:.4g}")
-        if j.get("note"):
+        if j.get("note") and j["note"] != count:  # `tp run` notes are often just "16/30"
             details.append(j["note"])
         if j.get("host"):
             details.append(j["host"])

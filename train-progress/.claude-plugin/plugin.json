@@ -1,7 +1,7 @@
 {
   "name": "train-progress",
-  "version": "0.3.0",
-  "description": "Live progress bars above the prompt for training runs and any other long task",
+  "version": "0.3.1",
+  "description": "Live progress bars under the prompt for training runs and any other long task",
   "author": { "name": "hanlongli" },
   "license": "MIT",
   "types": "./types/index.d.ts",
