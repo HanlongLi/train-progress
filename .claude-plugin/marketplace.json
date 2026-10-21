@@ -1,0 +1,5 @@
+{
+  "name": "local-mods",
+  "owner": { "name": "hanlongli" },
+  "plugins": [{ "name": "train-progress", "source": "./train-progress" }]
+}
