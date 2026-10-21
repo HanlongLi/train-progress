@@ -17,6 +17,8 @@ const KEEP_MS = 24 * 60 * 60 * 1000
 const BAND_KEEP_MS = 10 * 60 * 1000
 // Rows of jobs the bar above the prompt shows before "n more".
 const BAND_ROWS = 3
+// No ETA until a job has run this long: `tp set` alone would give "ETA 0s".
+const ETA_MIN_S = 5
 
 const jobs = atom({ plugin: 'train-progress', key: 'jobs' } as const, [] as Job[])
 const hideDone = atom({ plugin: 'train-progress', key: 'hideDone' } as const, false)
@@ -69,7 +71,7 @@ function parseJob(id: string, text: string, mtimeMs: number, now: number): Job |
   if (status !== 'running' && now - lastMs > KEEP_MS) return undefined
 
   let etaSec: number | undefined
-  if (status === 'running' && step > 0 && total > step && started > 0 && updated > started) {
+  if (status === 'running' && step > 0 && total > step && started > 0 && updated - started >= ETA_MIN_S) {
     etaSec = ((total - step) * (updated - started)) / step
   }
 
@@ -109,10 +111,12 @@ function timing(job: Job, now: number): string {
 }
 
 function details(job: Job): string {
+  const count = job.total > 0 ? `${job.step}/${job.total}` : job.step > 0 ? `step ${job.step}` : ''
   return [
-    job.total > 0 ? `${job.step}/${job.total}` : job.step > 0 && `step ${job.step}`,
+    count,
     job.metric !== undefined && `${job.metricName} ${job.metric.toPrecision(4)}`,
-    job.note,
+    // `tp run` notes are often just the step line ("16/30")
+    job.note !== count && job.note,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -134,11 +138,14 @@ export const register: Register = (on, options) => {
     await update($, scope, () => (options.scope === 'session' ? 'session' : 'all'))
 
     for (const name of ['progress', 'train']) {
-      await $.command.register({
-        name,
-        description: 'Progress of training runs and other long jobs (all|session, panel, hide|show)',
-        argumentHint: '[all|session|panel|hide|show]',
-      })
+      // A name another command holds is refused; the bar still works without it.
+      await $.command
+        .register({
+          name,
+          description: 'Progress of training runs and other long jobs (all|session, panel, hide|show)',
+          argumentHint: '[all|session|panel|hide|show]',
+        })
+        .catch(() => undefined)
     }
 
     if (options.watcher !== false) {

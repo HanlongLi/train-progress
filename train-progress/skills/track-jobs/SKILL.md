@@ -1,5 +1,5 @@
 ---
-name: progress
+name: track-jobs
 description: Track long-running commands (model training, builds, data processing, downloads, big test suites) as progress bars the person can watch, and check on running jobs. Use when starting a command that will take more than a minute or two, or when asked how a training run or background job is doing.
 ---
 
